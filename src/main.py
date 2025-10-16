@@ -344,7 +344,7 @@ class ANPRProcessor:
             self.crnn_loaded = False
             raise
     
-    def detect_vehicles_and_plates(self, frame: np.ndarray) -> Tuple[List[Tuple[int, int, int, int]], List[Tuple[int, int, int, int]]]:
+    def detect_vehicles_and_plates(self, frame: np.ndarray, frame_id: int = 0) -> Tuple[List[Tuple[int, int, int, int]], List[Tuple[int, int, int, int]]]:
         """Detect vehicles and license plates in frame using YOLO"""
         if self.yolo_model is None:
             logger.debug("YOLO model is None, skipping detection")
@@ -952,7 +952,7 @@ class ANPRProcessor:
             should_process_ocr = (self.frame_skip_counter % self.process_every_n_frames == 0)
             
             # Always detect cars and plates for display, but limit OCR processing
-            vehicle_boxes, plate_boxes = self.detect_vehicles_and_plates(frame)
+            vehicle_boxes, plate_boxes = self.detect_vehicles_and_plates(frame, frame_id)
             logger.debug(f"Frame {frame_id}: Found {len(vehicle_boxes)} cars, {len(plate_boxes)} plate boxes")
             
             # Log every 10th frame for debugging
@@ -1113,7 +1113,7 @@ class ANPRProcessor:
     def process_frame_with_zone(self, frame: np.ndarray, frame_id: int, detection_zone: List[Tuple[int, int]]) -> List[Detection]:
         """Process frame with stateful zone crossing based on precise line crossing."""
         try:
-            vehicles, plates = self.detect_vehicles_and_plates(frame)
+            vehicles, plates = self.detect_vehicles_and_plates(frame, frame_id)
             timestamp = time.time()
 
             entry_line = detection_zone[:2]
@@ -1960,27 +1960,47 @@ class MainWindow(QMainWindow):
     def setup_ui(self):
         """Setup user interface"""
         self.setWindowTitle("ANPR Live Detection System")
-        self.setGeometry(100, 100, 1400, 900)
+        
+        # Get screen geometry for responsive sizing
+        screen = QApplication.desktop().screenGeometry()
+        screen_width = screen.width()
+        screen_height = screen.height()
+        
+        # Set window size as percentage of screen size (80% of screen)
+        window_width = int(screen_width * 0.8)
+        window_height = int(screen_height * 0.8)
+        
+        # Center the window on screen
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        
+        self.setGeometry(x, y, window_width, window_height)
+        
+        # Set minimum size to prevent window from being too small
+        self.setMinimumSize(1000, 600)
         
         # Central widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        # Main layout
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        # Main layout with splitter for resizable panels
+        from PyQt5.QtWidgets import QSplitter
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        central_widget_layout = QHBoxLayout(central_widget)
+        central_widget_layout.setContentsMargins(10, 10, 10, 10)
+        central_widget_layout.addWidget(self.main_splitter)
         
         # Left panel - Video display
         left_panel = QVBoxLayout()
         
         # Video display
         self.video_label = QLabel("No video source selected")
-        self.video_label.setMinimumSize(640, 480)  # Reduced minimum size
+        # Set minimal constraints for video display
+        self.video_label.setMinimumSize(200, 150)  # Much smaller minimum size
         self.video_label.setStyleSheet("border: 2px solid gray; background-color: black;")
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setScaledContents(False)  # Ensure proper aspect ratio
-        # Set size policy to expand
+        self.video_label.setScaledContents(True)  # Allow scaling to maintain aspect ratio
+        # Set size policy to expand and maintain aspect ratio
         from PyQt5.QtWidgets import QSizePolicy
         self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         left_panel.addWidget(self.video_label)
@@ -2090,8 +2110,8 @@ class MainWindow(QMainWindow):
         
         # Right panel - Information and settings
         right_panel_widget = QWidget()
-        right_panel_widget.setMinimumWidth(350)  # Set minimum instead of maximum
-        right_panel_widget.setMaximumWidth(500)  # Increased maximum width
+        # Set minimum width for controls panel
+        right_panel_widget.setMinimumWidth(350)
         right_panel_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         
         # Create scroll area for right panel content
@@ -2364,10 +2384,59 @@ class MainWindow(QMainWindow):
         # Add panels to main layout
         left_widget = QWidget()
         left_widget.setLayout(left_panel)
+        left_widget.setMinimumWidth(200)  # Very small minimum width for flexibility
         left_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
-        main_layout.addWidget(left_widget, 3)  # Give more space to video area
-        main_layout.addWidget(scroll_area, 1)   # Use scroll area instead of widget directly
+        # Add panels to splitter for resizable layout
+        self.main_splitter.addWidget(left_widget)  # Feed section
+        self.main_splitter.addWidget(scroll_area)  # Controls panel
+        
+        # Set initial splitter proportions (60% feed, 40% controls)
+        self.main_splitter.setSizes([600, 400])  # Initial sizes in pixels
+        
+        # Set splitter properties
+        self.main_splitter.setChildrenCollapsible(False)  # Prevent panels from collapsing completely
+        self.main_splitter.setHandleWidth(8)  # Make the splitter handle more visible
+        
+        # Style the splitter handle
+        self.main_splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #cccccc;
+                border: 1px solid #999999;
+            }
+            QSplitter::handle:hover {
+                background-color: #aaaaaa;
+            }
+            QSplitter::handle:pressed {
+                background-color: #888888;
+            }
+        """)
+        
+    def resizeEvent(self, event):
+        """Handle window resize events for responsive design"""
+        super().resizeEvent(event)
+        
+        # Update splitter proportions to maintain good initial layout
+        if hasattr(self, 'main_splitter') and event.oldSize().width() > 0:
+            # Calculate proportional sizes based on window width
+            total_width = self.width() - 20  # Account for margins
+            feed_width = int(total_width * 0.6)  # 60% for feed
+            controls_width = int(total_width * 0.4)  # 40% for controls
+            
+            # Only update if the window was resized significantly
+            if abs(event.size().width() - event.oldSize().width()) > 50:
+                self.main_splitter.setSizes([feed_width, controls_width])
+    
+    def save_splitter_state(self):
+        """Save the current splitter state"""
+        if hasattr(self, 'main_splitter'):
+            sizes = self.main_splitter.sizes()
+            return sizes
+    
+    def restore_splitter_state(self, sizes):
+        """Restore the splitter state"""
+        if hasattr(self, 'main_splitter') and sizes:
+            self.main_splitter.setSizes(sizes)
         
     def setup_connections(self):
         """Setup signal connections"""
