@@ -28,7 +28,7 @@ import re
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
                             QWidget, QLabel, QPushButton, QComboBox, QFileDialog,
                             QTextEdit, QGroupBox, QProgressBar, QCheckBox, QSpinBox,
-                            QSlider, QFrame)
+                            QSlider, QFrame, QSplitter)
 from PyQt5.QtCore import QThread, pyqtSignal, QTimer, Qt
 from PyQt5.QtGui import QImage, QPixmap, QFont
 
@@ -219,7 +219,7 @@ class ANPRProcessor:
         self.parking_time_threshold = 3.0  # seconds
         
         # Vehicle-plate association filtering
-        self.vehicle_plate_association_enabled = True
+        self.vehicle_plate_association_enabled = False
         
         # Zone crossing state tracking
         self.zone_vehicle_states = {}  # vehicle_id -> {"state": "entered", "last_seen": timestamp, "processed": False}
@@ -401,7 +401,7 @@ class ANPRProcessor:
             if total_detections == 0:
                 logger.info("❌ No YOLO detections found in frame")
                 # Save frame for debugging when no detections found
-                if frame_id % 30 == 0:  # Save every 30th frame to avoid spam
+                if 'frame_id' in locals() and frame_id % 30 == 0:  # Save every 30th frame to avoid spam
                     timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
                     debug_frame_path = Config.OUTPUT_DIR / f"debug_no_detections_frame_{frame_id}_{timestamp_str}.jpg"
                     cv2.imwrite(str(debug_frame_path), frame)
@@ -949,7 +949,9 @@ class ANPRProcessor:
             
             # Frame skipping for real-time performance
             self.frame_skip_counter += 1
-            should_process_ocr = (self.frame_skip_counter % self.process_every_n_frames == 0)
+            #should_process_ocr = (self.frame_skip_counter % self.process_every_n_frames == 0)
+
+            should_process_ocr = True
             
             # Always detect cars and plates for display, but limit OCR processing
             vehicle_boxes, plate_boxes = self.detect_vehicles_and_plates(frame)
@@ -1966,10 +1968,29 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        # Main layout
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        # Main layout - use a wrapper layout to hold the splitter
+        wrapper_layout = QHBoxLayout(central_widget)
+        wrapper_layout.setSpacing(0)
+        wrapper_layout.setContentsMargins(10, 10, 10, 10)
+        
+        # Splitter for draggable resizing between video and right panel
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.setHandleWidth(6)
+        self.main_splitter.setStyleSheet("""
+            QSplitter::handle {
+                background-color: #555;
+                border: 1px solid #888;
+                border-radius: 2px;
+                margin: 2px 0px;
+            }
+            QSplitter::handle:hover {
+                background-color: #4CAF50;
+            }
+            QSplitter::handle:pressed {
+                background-color: #388E3C;
+            }
+        """)
+        wrapper_layout.addWidget(self.main_splitter)
         
         # Left panel - Video display
         left_panel = QVBoxLayout()
@@ -2090,8 +2111,7 @@ class MainWindow(QMainWindow):
         
         # Right panel - Information and settings
         right_panel_widget = QWidget()
-        right_panel_widget.setMinimumWidth(350)  # Set minimum instead of maximum
-        right_panel_widget.setMaximumWidth(500)  # Increased maximum width
+        right_panel_widget.setMinimumWidth(300)  # Minimum width for right panel
         right_panel_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         
         # Create scroll area for right panel content
@@ -2361,13 +2381,19 @@ class MainWindow(QMainWindow):
         # Add stretch to push everything up
         right_panel.addStretch()
         
-        # Add panels to main layout
+        # Add panels to splitter for draggable resizing
         left_widget = QWidget()
         left_widget.setLayout(left_panel)
+        left_widget.setMinimumWidth(400)  # Minimum width for video area
         left_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         
-        main_layout.addWidget(left_widget, 3)  # Give more space to video area
-        main_layout.addWidget(scroll_area, 1)   # Use scroll area instead of widget directly
+        self.main_splitter.addWidget(left_widget)
+        self.main_splitter.addWidget(scroll_area)
+        
+        # Set initial sizes: ~75% for video, ~25% for right panel
+        self.main_splitter.setSizes([1050, 350])
+        self.main_splitter.setCollapsible(0, False)  # Don't allow collapsing video panel
+        self.main_splitter.setCollapsible(1, False)  # Don't allow collapsing settings panel
         
     def setup_connections(self):
         """Setup signal connections"""
